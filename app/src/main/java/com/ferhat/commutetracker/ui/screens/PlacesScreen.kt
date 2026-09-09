@@ -81,6 +81,7 @@ fun PlacesScreen(vm: TrackerViewModel) {
                         onConfirm = { vm.confirmPlace(place) },
                         onRadius = { radiusFor = place },
                         onMerge = { mergeFrom = place },
+                        onLocateHere = { vm.locatePlaceHere(place) },
                         onDelete = { vm.deletePlace(place) },
                     )
                     HorizontalDivider()
@@ -109,6 +110,7 @@ fun PlacesScreen(vm: TrackerViewModel) {
                     onConfirm = null,
                     onRadius = { radiusFor = place },
                     onMerge = { mergeFrom = place },
+                    onLocateHere = { vm.locatePlaceHere(place) },
                     onDelete = { vm.deletePlace(place) },
                 )
                 HorizontalDivider()
@@ -151,6 +153,7 @@ private fun PlaceRow(
     onConfirm: (() -> Unit)?,
     onRadius: () -> Unit,
     onMerge: () -> Unit,
+    onLocateHere: () -> Unit,
     onDelete: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
@@ -187,6 +190,10 @@ private fun PlaceRow(
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                     DropdownMenuItem(text = { Text("Rename") }, onClick = { menuOpen = false; onRename() })
                     DropdownMenuItem(text = { Text("Radius") }, onClick = { menuOpen = false; onRadius() })
+                    DropdownMenuItem(
+                        text = { Text(if (place.hasCoordinates) "Move here (my location)" else "Set to my location") },
+                        onClick = { menuOpen = false; onLocateHere() },
+                    )
                     DropdownMenuItem(text = { Text("Merge into…") }, onClick = { menuOpen = false; onMerge() })
                     DropdownMenuItem(text = { Text("Delete") }, onClick = { menuOpen = false; onDelete() })
                 }

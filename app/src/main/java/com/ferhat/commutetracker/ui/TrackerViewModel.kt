@@ -9,6 +9,7 @@ import com.ferhat.commutetracker.data.Place
 import com.ferhat.commutetracker.data.PlaceRepository
 import com.ferhat.commutetracker.data.Trip
 import com.ferhat.commutetracker.data.TripRepository
+import com.ferhat.commutetracker.tracking.OneShotLocation
 import com.ferhat.commutetracker.tracking.TrackingController
 import com.ferhat.commutetracker.tracking.TrackingPermissions
 import com.ferhat.commutetracker.tracking.TrackingPreferences
@@ -94,6 +95,17 @@ class TrackerViewModel(app: Application) : AndroidViewModel(app) {
     fun setPlaceRadius(place: Place, radiusMeters: Double) = viewModelScope.launch {
         placeRepository.setRadius(place, radiusMeters)
         TrackingController.get(getApplication()).refreshGeofences()
+    }
+
+    fun locatePlaceHere(place: Place, onResult: (Boolean) -> Unit = {}) = viewModelScope.launch {
+        val fix = OneShotLocation.current(getApplication())
+        if (fix == null) {
+            onResult(false)
+            return@launch
+        }
+        placeRepository.setCoordinates(place, fix.first, fix.second)
+        TrackingController.get(getApplication()).refreshGeofences()
+        onResult(true)
     }
 
     fun deletePlace(place: Place) = viewModelScope.launch {

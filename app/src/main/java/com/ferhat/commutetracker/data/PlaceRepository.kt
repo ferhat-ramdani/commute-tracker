@@ -54,6 +54,10 @@ class PlaceRepository(context: Context) {
         if (trimmed.isNotEmpty()) placeDao.update(place.copy(label = trimmed, isConfirmed = true))
     }
 
+    suspend fun setCoordinates(place: Place, latitude: Double, longitude: Double) {
+        placeDao.update(place.copy(latitude = latitude, longitude = longitude))
+    }
+
     suspend fun setRadius(place: Place, radiusMeters: Double) {
         placeDao.update(place.copy(radiusMeters = radiusMeters.coerceIn(15.0, 500.0)))
     }

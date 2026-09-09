@@ -6,7 +6,6 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.lifecycle.LifecycleService
@@ -71,15 +70,14 @@ class TripRecordingService : LifecycleService() {
             stopRecording()
             return START_NOT_STICKY
         }
+        if (!TrackingPermissions.hasForegroundLocation(this)) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
         startedAtMillis = System.currentTimeMillis()
         startForegroundCompat()
         startLocationUpdates()
         return START_REDELIVER_INTENT
-    }
-
-    override fun onBind(intent: Intent): IBinder? {
-        super.onBind(intent)
-        return null
     }
 
     private fun startForegroundCompat() {
@@ -153,7 +151,9 @@ class TripRecordingService : LifecycleService() {
 
         fun stop(context: Context) {
             val intent = Intent(context, TripRecordingService::class.java).setAction(ACTION_STOP)
-            context.startService(intent)
+            // If the service isn't running, starting it from the background would throw;
+            // there's nothing to stop in that case anyway.
+            runCatching { context.startService(intent) }
         }
     }
 }
