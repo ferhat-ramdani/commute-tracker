@@ -7,13 +7,22 @@ import androidx.room.RoomDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [LocationEntity::class, CommuteEntity::class],
-    version = 1,
-    exportSchema = false,
+    entities = [
+        Place::class,
+        Trip::class,
+        LocationSample::class,
+        PlaceWifiSignature::class,
+        RouteLabel::class,
+    ],
+    version = 2,
+    exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
-    abstract fun locationDao(): LocationDao
-    abstract fun commuteDao(): CommuteDao
+    abstract fun placeDao(): PlaceDao
+    abstract fun tripDao(): TripDao
+    abstract fun locationSampleDao(): LocationSampleDao
+    abstract fun routeLabelDao(): RouteLabelDao
+    abstract fun placeWifiSignatureDao(): PlaceWifiSignatureDao
 
     companion object {
         @Volatile
@@ -29,12 +38,24 @@ abstract class AppDatabase : RoomDatabase() {
                 context.applicationContext,
                 AppDatabase::class.java,
                 "commute-tracker.db",
-            ).addCallback(object : Callback() {
-                override fun onCreate(db: SupportSQLiteDatabase) {
-                    // Seed the two locations the app is built around.
-                    db.execSQL("INSERT INTO locations (name) VALUES ('Home')")
-                    db.execSQL("INSERT INTO locations (name) VALUES ('Work')")
-                }
-            }).build()
+            )
+                // v1 (manual-only) had a tiny, disposable data model. Rather than risk a
+                // launch crash from a subtly wrong hand-written migration, v1 -> v2 drops
+                // the old tables. Future migrations (v2+) are done properly with exported
+                // schemas and MigrationTestHelper.
+                .fallbackToDestructiveMigrationFrom(1)
+                .addCallback(object : Callback() {
+                    override fun onCreate(db: SupportSQLiteDatabase) {
+                        db.execSQL(
+                            "INSERT INTO places (label, radiusMeters, isConfirmed, visitCount, firstSeenAt, lastSeenAt, source) " +
+                                "VALUES ('Home', 35.0, 1, 0, strftime('%s','now')*1000, strftime('%s','now')*1000, 'USER')",
+                        )
+                        db.execSQL(
+                            "INSERT INTO places (label, radiusMeters, isConfirmed, visitCount, firstSeenAt, lastSeenAt, source) " +
+                                "VALUES ('Work', 35.0, 1, 0, strftime('%s','now')*1000, strftime('%s','now')*1000, 'USER')",
+                        )
+                    }
+                })
+                .build()
     }
 }

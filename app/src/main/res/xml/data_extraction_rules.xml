@@ -1,9 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <data-extraction-rules>
-    <cloud-backup>
-        <include domain="database" path="commute-tracker.db" />
+    <!--
+      Location history is confidential and must never leave the device. Both cloud
+      backup and local device-to-device transfer of this app's data are disabled.
+    -->
+    <cloud-backup disableIfNoEncryptionCapabilities="true">
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
     </cloud-backup>
     <device-transfer>
-        <include domain="database" path="commute-tracker.db" />
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
     </device-transfer>
 </data-extraction-rules>

@@ -22,3 +22,26 @@ fun formatDateTime(epochMillis: Long): String =
 
 fun formatTime(epochMillis: Long): String =
     DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(epochMillis))
+
+fun formatDate(epochMillis: Long): String =
+    DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(epochMillis))
+
+/** "1.2 km" / "740 m" */
+fun formatDistance(meters: Double): String =
+    if (meters >= 1000) String.format("%.1f km", meters / 1000.0)
+    else "${meters.toInt()} m"
+
+/** "2 h ago", "5 min ago", "just now" */
+fun formatRelative(epochMillis: Long, nowMillis: Long = System.currentTimeMillis()): String {
+    val diff = (nowMillis - epochMillis).coerceAtLeast(0)
+    val minutes = TimeUnit.MILLISECONDS.toMinutes(diff)
+    val hours = TimeUnit.MILLISECONDS.toHours(diff)
+    val days = TimeUnit.MILLISECONDS.toDays(diff)
+    return when {
+        minutes < 1 -> "just now"
+        minutes < 60 -> "$minutes min ago"
+        hours < 24 -> "$hours h ago"
+        days < 7 -> "$days d ago"
+        else -> formatDate(epochMillis)
+    }
+}

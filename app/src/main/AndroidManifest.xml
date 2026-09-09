@@ -1,15 +1,41 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+      NOTE: there is deliberately NO android.permission.INTERNET here. This app never
+      makes network requests; every location fix, trip and place stays in its private
+      on-device database. Do not add INTERNET without a very good reason.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- Pulled in transitively by WorkManager / Play Services. Neither can send data
+         anywhere without INTERNET (which we do not declare), but strip it anyway so the
+         app cannot even observe connectivity state. -->
+    <uses-permission
+        android:name="android.permission.ACCESS_NETWORK_STATE"
+        tools:node="remove" />
+
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
 
     <application
-        android:allowBackup="true"
+        android:name=".CommuteTrackerApp"
+        android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
-        android:fullBackupContent="@xml/backup_rules"
+        android:fullBackupContent="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher"
         android:supportsRtl="true"
-        android:theme="@style/Theme.CommuteTracker">
+        android:theme="@style/Theme.CommuteTracker"
+        android:usesCleartextTraffic="false">
 
         <activity
             android:name=".MainActivity"
@@ -21,6 +47,38 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".tracking.TripRecordingService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
+
+        <receiver
+            android:name=".tracking.ActivityTransitionReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.ferhat.commutetracker.ACTIVITY_TRANSITION" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".tracking.GeofenceBroadcastReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.ferhat.commutetracker.GEOFENCE" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".tracking.BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
+
     </application>
 
 </manifest>
