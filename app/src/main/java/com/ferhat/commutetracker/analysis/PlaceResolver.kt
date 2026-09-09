@@ -6,6 +6,7 @@ data class KnownPlace(
     val latitude: Double,
     val longitude: Double,
     val radiusMeters: Double,
+    val isTransit: Boolean = false,
 )
 
 sealed interface PlaceMatch {

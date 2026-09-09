@@ -56,6 +56,12 @@ interface TripDao {
     @Query("SELECT * FROM trips WHERE id = :id")
     suspend fun getById(id: Long): Trip?
 
+    @Query("SELECT * FROM trips WHERE isAuto = 1 AND startEpochMillis >= :since ORDER BY startEpochMillis")
+    suspend fun getAutoTripsSince(since: Long): List<Trip>
+
+    @Query("SELECT MAX(endEpochMillis) FROM trips WHERE isAuto = 1 AND endEpochMillis IS NOT NULL")
+    suspend fun lastAutoTripEnd(): Long?
+
     @Query("SELECT * FROM trips WHERE endEpochMillis IS NOT NULL ORDER BY startEpochMillis")
     suspend fun getFinished(): List<Trip>
 
@@ -70,30 +76,55 @@ interface TripDao {
 }
 
 @Dao
-interface LocationSampleDao {
-    @Insert(onConflict = OnConflictStrategy.IGNORE)
-    suspend fun insert(sample: LocationSample): Long
+interface TripStopDao {
+    @Query("SELECT * FROM trip_stops WHERE tripId = :tripId ORDER BY arrivalMillis")
+    suspend fun getForTrip(tripId: Long): List<TripStop>
 
-    @Insert(onConflict = OnConflictStrategy.IGNORE)
-    suspend fun insertAll(samples: List<LocationSample>)
+    @Query("SELECT * FROM trip_stops")
+    fun observeAll(): Flow<List<TripStop>>
 
-    @Query("SELECT * FROM location_samples WHERE tripId = :tripId ORDER BY epochMillis")
-    suspend fun getForTrip(tripId: Long): List<LocationSample>
+    @Insert
+    suspend fun insert(stop: TripStop): Long
 
-    @Query("SELECT * FROM location_samples WHERE tripId IS NULL ORDER BY epochMillis")
-    suspend fun getUnassigned(): List<LocationSample>
-
-    @Query("UPDATE location_samples SET tripId = :tripId WHERE tripId IS NULL AND epochMillis BETWEEN :from AND :to")
-    suspend fun assignToTrip(tripId: Long, from: Long, to: Long)
-
-    @Query("DELETE FROM location_samples WHERE epochMillis < :before")
-    suspend fun pruneOlderThan(before: Long)
-
-    @Query("DELETE FROM location_samples WHERE tripId IS NULL AND epochMillis < :before")
-    suspend fun pruneUnassignedBefore(before: Long)
-
-    @Query("DELETE FROM location_samples WHERE tripId = :tripId")
+    @Query("DELETE FROM trip_stops WHERE tripId = :tripId")
     suspend fun deleteForTrip(tripId: Long)
+}
+
+@Dao
+interface PositionLogDao {
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insert(entry: PositionLog): Long
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertAll(entries: List<PositionLog>)
+
+    @Query("SELECT * FROM position_log WHERE epochMillis >= :from ORDER BY epochMillis")
+    suspend fun since(from: Long): List<PositionLog>
+
+    @Query("SELECT * FROM position_log WHERE epochMillis BETWEEN :from AND :to ORDER BY epochMillis")
+    suspend fun between(from: Long, to: Long): List<PositionLog>
+
+    @Query("SELECT * FROM position_log ORDER BY epochMillis DESC LIMIT 1")
+    suspend fun latest(): PositionLog?
+
+    @Query("SELECT COUNT(*) FROM position_log")
+    fun observeCount(): Flow<Int>
+
+    @Query("SELECT MIN(epochMillis) FROM position_log")
+    fun observeOldest(): Flow<Long?>
+
+    @Query("DELETE FROM position_log WHERE epochMillis < :before")
+    suspend fun deleteOlderThan(before: Long)
+
+    /**
+     * Thin the log older than [before] to at most one row per [bucketMillis] window,
+     * keeping the earliest row in each bucket.
+     */
+    @Query(
+        "DELETE FROM position_log WHERE epochMillis < :before AND id NOT IN (" +
+            "SELECT MIN(id) FROM position_log WHERE epochMillis < :before GROUP BY epochMillis / :bucketMillis)",
+    )
+    suspend fun downsampleOlderThan(before: Long, bucketMillis: Long)
 }
 
 @Dao

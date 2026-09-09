@@ -82,6 +82,7 @@ fun PlacesScreen(vm: TrackerViewModel) {
                         onRadius = { radiusFor = place },
                         onMerge = { mergeFrom = place },
                         onLocateHere = { vm.locatePlaceHere(place) },
+                        onToggleTransit = { vm.setPlaceTransit(place, !place.isTransit) },
                         onDelete = { vm.deletePlace(place) },
                     )
                     HorizontalDivider()
@@ -111,6 +112,7 @@ fun PlacesScreen(vm: TrackerViewModel) {
                     onRadius = { radiusFor = place },
                     onMerge = { mergeFrom = place },
                     onLocateHere = { vm.locatePlaceHere(place) },
+                    onToggleTransit = { vm.setPlaceTransit(place, !place.isTransit) },
                     onDelete = { vm.deletePlace(place) },
                 )
                 HorizontalDivider()
@@ -154,6 +156,7 @@ private fun PlaceRow(
     onRadius: () -> Unit,
     onMerge: () -> Unit,
     onLocateHere: () -> Unit,
+    onToggleTransit: () -> Unit,
     onDelete: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
@@ -176,6 +179,7 @@ private fun PlaceRow(
                         append(if (place.source == Place.SOURCE_AUTO) "discovered" else "manual")
                         append(" · ${place.visitCount} visit${if (place.visitCount == 1) "" else "s"}")
                         append(" · ~${place.radiusMeters.toInt()} m")
+                        if (place.isTransit) append(" · transit")
                         if (!place.hasCoordinates) append(" · no location yet")
                     },
                     style = MaterialTheme.typography.bodySmall,
@@ -193,6 +197,10 @@ private fun PlaceRow(
                     DropdownMenuItem(
                         text = { Text(if (place.hasCoordinates) "Move here (my location)" else "Set to my location") },
                         onClick = { menuOpen = false; onLocateHere() },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(if (place.isTransit) "Not a transit stop" else "Mark as transit stop") },
+                        onClick = { menuOpen = false; onToggleTransit() },
                     )
                     DropdownMenuItem(text = { Text("Merge into…") }, onClick = { menuOpen = false; onMerge() })
                     DropdownMenuItem(text = { Text("Delete") }, onClick = { menuOpen = false; onDelete() })

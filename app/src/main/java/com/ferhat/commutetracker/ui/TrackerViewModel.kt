@@ -9,6 +9,7 @@ import com.ferhat.commutetracker.data.Place
 import com.ferhat.commutetracker.data.PlaceRepository
 import com.ferhat.commutetracker.data.Trip
 import com.ferhat.commutetracker.data.TripRepository
+import com.ferhat.commutetracker.data.TripStop
 import com.ferhat.commutetracker.tracking.OneShotLocation
 import com.ferhat.commutetracker.tracking.TrackingController
 import com.ferhat.commutetracker.tracking.TrackingPermissions
@@ -22,12 +23,16 @@ import kotlinx.coroutines.launch
 data class TrackerUiState(
     val places: List<Place> = emptyList(),
     val trips: List<Trip> = emptyList(),
+    val tripStops: List<TripStop> = emptyList(),
     val routeGroups: List<RouteGroup> = emptyList(),
     val activeTrip: Trip? = null,
     val trackingEnabled: Boolean = false,
+    val positionLogCount: Int = 0,
+    val positionLogOldestMillis: Long? = null,
 ) {
     val placesById: Map<Long, Place> get() = places.associateBy { it.id }
     val discoveredPlaces: List<Place> get() = places.filter { !it.isConfirmed }
+    fun stopsForTrip(tripId: Long): List<TripStop> = tripStops.filter { it.tripId == tripId }
 }
 
 class TrackerViewModel(app: Application) : AndroidViewModel(app) {
@@ -36,7 +41,7 @@ class TrackerViewModel(app: Application) : AndroidViewModel(app) {
     private val tripRepository = TripRepository(app)
     private val trackingPreferences = TrackingPreferences(app)
 
-    val uiState: StateFlow<TrackerUiState> = combine(
+    private val core = combine(
         placeRepository.places,
         tripRepository.finishedTrips,
         tripRepository.activeTrip,
@@ -50,6 +55,19 @@ class TrackerViewModel(app: Application) : AndroidViewModel(app) {
             routeGroups = TripGrouper.group(trips, places.associateBy { it.id }, labelMap),
             activeTrip = active,
             trackingEnabled = trackingEnabled,
+        )
+    }
+
+    val uiState: StateFlow<TrackerUiState> = combine(
+        core,
+        tripRepository.tripStops,
+        tripRepository.positionLogCount,
+        tripRepository.positionLogOldest,
+    ) { state, stops, logCount, oldest ->
+        state.copy(
+            tripStops = stops,
+            positionLogCount = logCount,
+            positionLogOldestMillis = oldest,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TrackerUiState())
 
@@ -97,15 +115,14 @@ class TrackerViewModel(app: Application) : AndroidViewModel(app) {
         TrackingController.get(getApplication()).refreshGeofences()
     }
 
-    fun locatePlaceHere(place: Place, onResult: (Boolean) -> Unit = {}) = viewModelScope.launch {
-        val fix = OneShotLocation.current(getApplication())
-        if (fix == null) {
-            onResult(false)
-            return@launch
-        }
+    fun setPlaceTransit(place: Place, transit: Boolean) = viewModelScope.launch {
+        placeRepository.setKind(place, if (transit) Place.KIND_TRANSIT else Place.KIND_NORMAL)
+    }
+
+    fun locatePlaceHere(place: Place) = viewModelScope.launch {
+        val fix = OneShotLocation.current(getApplication()) ?: return@launch
         placeRepository.setCoordinates(place, fix.first, fix.second)
         TrackingController.get(getApplication()).refreshGeofences()
-        onResult(true)
     }
 
     fun deletePlace(place: Place) = viewModelScope.launch {

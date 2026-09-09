@@ -161,9 +161,19 @@ fun SettingsScreen(vm: TrackerViewModel) {
             style = MaterialTheme.typography.bodyMedium,
         )
         Spacer(Modifier.height(12.dp))
+        val oldest = state.positionLogOldestMillis
         Text(
-            "Raw GPS samples are deleted about a week after the trip they belong to has " +
-                "been analysed. Trips and places are kept until you delete them.",
+            buildString {
+                append("Location history: ${state.positionLogCount} fixes on this device")
+                if (oldest != null) append(", oldest ${com.ferhat.commutetracker.ui.formatRelative(oldest)}")
+                append(".")
+            },
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Kept in full for ~90 days, then thinned to about one fix per hour, then " +
+                "deleted. Trips and places stay until you remove them.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

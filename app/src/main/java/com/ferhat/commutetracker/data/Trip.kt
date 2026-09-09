@@ -46,6 +46,10 @@ data class Trip(
     val isAuto: Boolean = true,
     val isConfirmed: Boolean = false,
     val note: String? = null,
+    /** netDisplacement / pathLength at the moment the trip was committed (1 = straight line). */
+    val straightness: Double? = null,
+    /** Worst GPS accuracy among the fixes used, for a "how trustworthy is this" hint. */
+    val maxAccuracyMeters: Float? = null,
 ) {
     val isActive: Boolean get() = endEpochMillis == null
 

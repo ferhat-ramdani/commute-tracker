@@ -6,15 +6,24 @@ import kotlinx.coroutines.flow.Flow
 class TripRepository(context: Context) {
     private val db = AppDatabase.get(context)
     private val tripDao = db.tripDao()
-    private val sampleDao = db.locationSampleDao()
+    private val tripStopDao = db.tripStopDao()
+    private val positionLogDao = db.positionLogDao()
     private val routeLabelDao = db.routeLabelDao()
 
     val finishedTrips: Flow<List<Trip>> = tripDao.observeFinished()
     val activeTrip: Flow<Trip?> = tripDao.observeActive()
     val allTrips: Flow<List<Trip>> = tripDao.observeAll()
     val routeLabels: Flow<List<RouteLabel>> = routeLabelDao.observeAll()
+    val tripStops: Flow<List<TripStop>> = tripStopDao.observeAll()
 
-    // ---- Manual flow -------------------------------------------------------
+    val positionLogCount: Flow<Int> = positionLogDao.observeCount()
+    val positionLogOldest: Flow<Long?> = positionLogDao.observeOldest()
+
+    // ---- raw position log ---------------------------------------------
+
+    suspend fun logPosition(entry: PositionLog) = positionLogDao.insert(entry)
+
+    // ---- manual flow -------------------------------------------------
 
     suspend fun startManualTrip(originPlaceId: Long, destinationPlaceId: Long): Long? {
         if (tripDao.getActive() != null) return null
@@ -36,49 +45,12 @@ class TripRepository(context: Context) {
 
     suspend fun cancelActiveTrip() {
         val active = tripDao.getActive() ?: return
-        sampleDao.deleteForTrip(active.id)
         tripDao.delete(active)
     }
 
-    // ---- Auto flow (used by the tracker) ---------------------------------
-
     suspend fun getActiveTrip(): Trip? = tripDao.getActive()
 
-    suspend fun startAutoTrip(originPlaceId: Long?, startedAt: Long): Long {
-        return tripDao.insert(
-            Trip(
-                originPlaceId = originPlaceId,
-                startEpochMillis = startedAt,
-                isAuto = true,
-                isConfirmed = false,
-            ),
-        )
-    }
-
-    suspend fun finishAutoTrip(
-        tripId: Long,
-        destinationPlaceId: Long?,
-        endedAt: Long,
-        distanceMeters: Double,
-        sampleCount: Int,
-    ) {
-        val trip = tripDao.getById(tripId) ?: return
-        tripDao.update(
-            trip.copy(
-                destinationPlaceId = destinationPlaceId,
-                endEpochMillis = endedAt,
-                distanceMeters = distanceMeters,
-                sampleCount = sampleCount,
-            ),
-        )
-    }
-
-    suspend fun discardTrip(tripId: Long) {
-        sampleDao.deleteForTrip(tripId)
-        tripDao.getById(tripId)?.let { tripDao.delete(it) }
-    }
-
-    // ---- Editing --------------------------------------------------------
+    // ---- editing ---------------------------------------------------
 
     suspend fun setEndpoints(tripId: Long, originPlaceId: Long?, destinationPlaceId: Long?) {
         val trip = tripDao.getById(tripId) ?: return
@@ -96,19 +68,13 @@ class TripRepository(context: Context) {
     }
 
     suspend fun delete(trip: Trip) {
-        sampleDao.deleteForTrip(trip.id)
+        tripStopDao.deleteForTrip(trip.id)
         tripDao.delete(trip)
     }
 
-    // ---- Samples -------------------------------------------------------
+    suspend fun stopsForTrip(tripId: Long): List<TripStop> = tripStopDao.getForTrip(tripId)
 
-    suspend fun addSample(sample: LocationSample) = sampleDao.insert(sample)
-
-    suspend fun samplesForTrip(tripId: Long): List<LocationSample> = sampleDao.getForTrip(tripId)
-
-    suspend fun pruneSamplesOlderThan(cutoffMillis: Long) = sampleDao.pruneOlderThan(cutoffMillis)
-
-    // ---- Route labels -------------------------------------------------
+    // ---- route labels -------------------------------------------
 
     suspend fun setRouteLabel(originPlaceId: Long, destinationPlaceId: Long, label: String) {
         routeLabelDao.upsert(

@@ -7,11 +7,18 @@ import com.google.android.gms.location.Priority
 import com.google.android.gms.tasks.CancellationTokenSource
 import kotlinx.coroutines.tasks.await
 
+data class Fix(
+    val latitude: Double,
+    val longitude: Double,
+    val accuracyMeters: Float,
+    val epochMillis: Long,
+)
+
 /** A single current-location fix, e.g. to pin "Home" to where you're standing. */
 object OneShotLocation {
 
     @SuppressLint("MissingPermission")
-    suspend fun current(context: Context): Pair<Double, Double>? {
+    suspend fun fix(context: Context): Fix? {
         if (!TrackingPermissions.hasForegroundLocation(context)) return null
         val client = LocationServices.getFusedLocationProviderClient(context)
         val location = runCatching {
@@ -20,6 +27,14 @@ object OneShotLocation {
                 CancellationTokenSource().token,
             ).await()
         }.getOrNull() ?: return null
-        return location.latitude to location.longitude
+        return Fix(
+            latitude = location.latitude,
+            longitude = location.longitude,
+            accuracyMeters = if (location.hasAccuracy()) location.accuracy else 0f,
+            epochMillis = location.time.takeIf { it > 0L } ?: System.currentTimeMillis(),
+        )
     }
+
+    suspend fun current(context: Context): Pair<Double, Double>? =
+        fix(context)?.let { it.latitude to it.longitude }
 }

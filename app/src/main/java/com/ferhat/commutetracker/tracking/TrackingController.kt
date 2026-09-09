@@ -2,6 +2,7 @@ package com.ferhat.commutetracker.tracking
 
 import android.content.Context
 import com.ferhat.commutetracker.data.PlaceRepository
+import com.ferhat.commutetracker.data.PositionLog
 import com.ferhat.commutetracker.data.TripRepository
 import com.google.android.gms.location.ActivityTransition
 import com.google.android.gms.location.DetectedActivity
@@ -30,6 +31,7 @@ class TrackingController private constructor(private val context: Context) {
         activityTransitionManager.register()
         refreshGeofences()
         NightlyMaintenanceWorker.schedule(context)
+        HeartbeatWorker.schedule(context)
         prefs.markEvent()
     }
 
@@ -39,6 +41,7 @@ class TrackingController private constructor(private val context: Context) {
         geofenceManager.clear()
         SettleCheckWorker.cancel(context)
         NightlyMaintenanceWorker.cancel(context)
+        HeartbeatWorker.cancel(context)
         TripRecordingService.stop(context)
         prefs.endMovement()
     }
@@ -50,6 +53,22 @@ class TrackingController private constructor(private val context: Context) {
         activityTransitionManager.register()
         refreshGeofences()
         NightlyMaintenanceWorker.schedule(context)
+        HeartbeatWorker.schedule(context)
+    }
+
+    private suspend fun logTransitionFix() {
+        val fix = OneShotLocation.fix(context) ?: return
+        tripRepository.logPosition(
+            PositionLog(
+                latitude = fix.latitude,
+                longitude = fix.longitude,
+                accuracyMeters = fix.accuracyMeters,
+                speedMps = 0f,
+                bearingDeg = 0f,
+                epochMillis = fix.epochMillis,
+                source = PositionLog.SOURCE_TRANSITION,
+            ),
+        )
     }
 
     suspend fun refreshGeofences() {
@@ -62,6 +81,7 @@ class TrackingController private constructor(private val context: Context) {
         prefs.markEvent()
         if (!prefs.isEnabled()) return
         val entering = transitionType == ActivityTransition.ACTIVITY_TRANSITION_ENTER
+        logTransitionFix()
         when (activityType) {
             DetectedActivity.STILL ->
                 if (entering) scheduleSettleCheck() else startMovement()

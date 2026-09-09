@@ -66,6 +66,10 @@ class PlaceRepository(context: Context) {
         placeDao.update(place.copy(category = category))
     }
 
+    suspend fun setKind(place: Place, kind: String) {
+        placeDao.update(place.copy(kind = kind))
+    }
+
     suspend fun confirm(place: Place) {
         placeDao.update(place.copy(isConfirmed = true))
     }

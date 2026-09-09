@@ -12,7 +12,7 @@ import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import com.ferhat.commutetracker.MainActivity
 import com.ferhat.commutetracker.R
-import com.ferhat.commutetracker.data.LocationSample
+import com.ferhat.commutetracker.data.PositionLog
 import com.ferhat.commutetracker.data.TripRepository
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationCallback
@@ -41,13 +41,15 @@ class TripRecordingService : LifecycleService() {
             val fallbackNow = System.currentTimeMillis()
             lifecycleScope.launch {
                 result.locations.forEach { location ->
-                    tripRepository.addSample(
-                        LocationSample(
+                    tripRepository.logPosition(
+                        PositionLog(
                             latitude = location.latitude,
                             longitude = location.longitude,
                             accuracyMeters = if (location.hasAccuracy()) location.accuracy else 0f,
-                            speedMetersPerSecond = if (location.hasSpeed()) location.speed else 0f,
+                            speedMps = if (location.hasSpeed()) location.speed else 0f,
+                            bearingDeg = if (location.hasBearing()) location.bearing else 0f,
                             epochMillis = location.time.takeIf { it > 0L } ?: fallbackNow,
+                            source = PositionLog.SOURCE_TRIP,
                         ),
                     )
                     sampleCount++
@@ -95,7 +97,9 @@ class TripRecordingService : LifecycleService() {
             stopRecording()
             return
         }
-        val request = LocationRequest.Builder(Priority.PRIORITY_BALANCED_POWER_ACCURACY, INTERVAL_MS)
+        // Trips are the precision-critical part, and they're bounded in time, so this
+        // runs at high accuracy — the battery cost only lasts as long as the journey.
+        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, INTERVAL_MS)
             .setMinUpdateIntervalMillis(MIN_INTERVAL_MS)
             .setMaxUpdateDelayMillis(MAX_BATCH_DELAY_MS)
             .setWaitForAccurateLocation(false)
@@ -138,9 +142,9 @@ class TripRecordingService : LifecycleService() {
     }
 
     companion object {
-        private const val INTERVAL_MS = 20_000L
-        private const val MIN_INTERVAL_MS = 10_000L
-        private const val MAX_BATCH_DELAY_MS = 90_000L
+        private const val INTERVAL_MS = 15_000L
+        private const val MIN_INTERVAL_MS = 8_000L
+        private const val MAX_BATCH_DELAY_MS = 40_000L
 
         const val ACTION_STOP = "com.ferhat.commutetracker.STOP_RECORDING"
 

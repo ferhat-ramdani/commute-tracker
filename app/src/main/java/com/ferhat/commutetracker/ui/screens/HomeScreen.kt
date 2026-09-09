@@ -113,6 +113,7 @@ fun HomeScreen(vm: TrackerViewModel) {
                 TripRow(
                     trip = trip,
                     placesById = state.placesById,
+                    stopCount = state.stopsForTrip(trip.id).size,
                     onConfirm = { vm.confirmTrip(trip.id) },
                     onDelete = { vm.deleteTrip(trip) },
                 )
@@ -274,6 +275,7 @@ internal fun RouteText(origin: String, destination: String) {
 private fun TripRow(
     trip: Trip,
     placesById: Map<Long, Place>,
+    stopCount: Int,
     onConfirm: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -287,8 +289,13 @@ private fun TripRow(
                 destination = placeLabel(trip.destinationPlaceId, placesById),
             )
             Text(
-                "${formatTime(trip.startEpochMillis)} · ${formatDuration(trip.durationMillis())}" +
-                    if (!trip.isConfirmed && trip.isAuto) " · unconfirmed" else "",
+                buildString {
+                    append(formatTime(trip.startEpochMillis))
+                    append(" · ")
+                    append(formatDuration(trip.durationMillis()))
+                    if (stopCount > 0) append(" · $stopCount stop${if (stopCount == 1) "" else "s"}")
+                    if (!trip.isConfirmed && trip.isAuto) append(" · unconfirmed")
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

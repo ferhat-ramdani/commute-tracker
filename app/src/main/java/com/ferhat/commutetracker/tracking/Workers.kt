@@ -20,6 +20,8 @@ import com.ferhat.commutetracker.MainActivity
 import com.ferhat.commutetracker.R
 import com.ferhat.commutetracker.analysis.TripAnalyzer
 import com.ferhat.commutetracker.data.AppDatabase
+import com.ferhat.commutetracker.data.PositionLog
+import com.ferhat.commutetracker.data.TripRepository
 import java.util.concurrent.TimeUnit
 
 /**
@@ -36,7 +38,9 @@ class SettleCheckWorker(context: Context, params: WorkerParameters) :
 
     companion object {
         private const val NAME = "settle-check"
-        private val DELAY = TimeUnit.MINUTES.toMillis(4)
+        // Short — the batch detector re-stitches a trip across a stop of up to the
+        // transit-wait tolerance, so stopping the service early costs nothing.
+        private val DELAY = TimeUnit.MINUTES.toMillis(5)
 
         fun enqueue(context: Context) {
             val request = OneTimeWorkRequestBuilder<SettleCheckWorker>()
@@ -59,7 +63,7 @@ class AnalysisWorker(context: Context, params: WorkerParameters) :
     override suspend fun doWork(): Result {
         val originPlaceId = inputData.getLong(KEY_ORIGIN, -1L).takeIf { it > 0L }
         val analyzer = TripAnalyzer(applicationContext)
-        val newPlaceIds = runCatching { analyzer.analyzePendingSamples(originPlaceId) }
+        val newPlaceIds = runCatching { analyzer.analyzeRecent(originPlaceId) }
             .getOrElse { return Result.retry() }
 
         TrackingController.get(applicationContext).refreshGeofences()
@@ -105,17 +109,66 @@ class AnalysisWorker(context: Context, params: WorkerParameters) :
     }
 }
 
+/**
+ * Every ~30 min while tracking is on and the user is NOT moving, drop one location fix
+ * into the position log so the raw "where was I" history stays continuous even between
+ * trips. One fix per half hour is a negligible battery cost.
+ */
+class HeartbeatWorker(context: Context, params: WorkerParameters) :
+    CoroutineWorker(context, params) {
+
+    override suspend fun doWork(): Result {
+        val prefs = TrackingPreferences(applicationContext)
+        if (!prefs.isEnabled() || prefs.movementStartedAt() != null) return Result.success()
+        if (!TrackingPermissions.hasForegroundLocation(applicationContext)) return Result.success()
+
+        val fix = OneShotLocation.fix(applicationContext) ?: return Result.success()
+        TripRepository(applicationContext).logPosition(
+            PositionLog(
+                latitude = fix.latitude,
+                longitude = fix.longitude,
+                accuracyMeters = fix.accuracyMeters,
+                speedMps = 0f,
+                bearingDeg = 0f,
+                epochMillis = fix.epochMillis,
+                source = PositionLog.SOURCE_HEARTBEAT,
+            ),
+        )
+        return Result.success()
+    }
+
+    companion object {
+        private const val NAME = "position-heartbeat"
+
+        fun schedule(context: Context) {
+            val request = PeriodicWorkRequestBuilder<HeartbeatWorker>(30, TimeUnit.MINUTES)
+                .setConstraints(
+                    Constraints.Builder()
+                        .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
+                        .build(),
+                )
+                .build()
+            WorkManager.getInstance(context)
+                .enqueueUniquePeriodicWork(NAME, ExistingPeriodicWorkPolicy.KEEP, request)
+        }
+
+        fun cancel(context: Context) {
+            WorkManager.getInstance(context).cancelUniqueWork(NAME)
+        }
+    }
+}
+
 /** Nightly (charging + Wi-Fi + idle): prune stale samples, re-sync geofences. */
 class NightlyMaintenanceWorker(context: Context, params: WorkerParameters) :
     CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
         runCatching {
-            TripAnalyzer(applicationContext).pruneOldSamples(retentionDays = 7)
-            // Keep the places table honest: bump visit counts are already maintained;
-            // just make sure geofences match the current place list.
+            val analyzer = TripAnalyzer(applicationContext)
+            analyzer.analyzeRecent(fallbackOriginPlaceId = null) // catch up on anything missed
+            analyzer.applyRetention()
             TrackingController.get(applicationContext).refreshGeofences()
-            AppDatabase.get(applicationContext) // touch to trigger any pending checkpoints
+            AppDatabase.get(applicationContext)
         }
         return Result.success()
     }

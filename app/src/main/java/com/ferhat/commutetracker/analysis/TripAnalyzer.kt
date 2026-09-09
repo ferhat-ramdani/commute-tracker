@@ -4,111 +4,119 @@ import android.content.Context
 import com.ferhat.commutetracker.data.AppDatabase
 import com.ferhat.commutetracker.data.PlaceRepository
 import com.ferhat.commutetracker.data.Trip
+import com.ferhat.commutetracker.data.TripStop
 import java.util.concurrent.TimeUnit
 
 /**
- * Turns the raw location samples collected during a movement session into [Trip] rows,
- * discovering new [com.ferhat.commutetracker.data.Place]s as needed. Idempotent-ish:
- * only ever consumes *unassigned* samples, so re-running is safe.
+ * Runs [TripDetector] over a rolling window of the raw position log and writes any
+ * newly-found journeys. Only ever *adds* trips that don't overlap an existing one, so
+ * it can be re-run freely (after every stop and nightly).
  */
-class TripAnalyzer(context: Context) {
-
+class TripAnalyzer(
+    context: Context,
+    private val config: DetectionConfig = DetectionConfig.DEFAULT,
+) {
     private val db = AppDatabase.get(context)
-    private val sampleDao = db.locationSampleDao()
+    private val positionLogDao = db.positionLogDao()
     private val tripDao = db.tripDao()
+    private val tripStopDao = db.tripStopDao()
     private val placeDao = db.placeDao()
     private val placeRepository = PlaceRepository(context)
 
-    private val detector = StayPointDetector()
-    private val segmenter = TripSegmenter()
-    private val resolver = PlaceResolver()
+    private val preprocessor = TrackPreprocessor(config)
+    private val detector = TripDetector(config)
+
+    private val lookbackMillis = TimeUnit.HOURS.toMillis(26)
 
     /** @return ids of any newly discovered (unconfirmed) places. */
-    suspend fun analyzePendingSamples(fallbackOriginPlaceId: Long?): List<Long> {
-        val samples = sampleDao.getUnassigned().sortedBy { it.epochMillis }
-        val newPlaceIds = mutableListOf<Long>()
-        if (samples.size < 2) {
-            sampleDao.pruneUnassignedBefore(cutoffNow())
-            return newPlaceIds
-        }
+    suspend fun analyzeRecent(fallbackOriginPlaceId: Long?): List<Long> {
+        val now = System.currentTimeMillis()
+        val lastEnd = tripDao.lastAutoTripEnd() ?: 0L
+        val windowStart = maxOf(lastEnd - TimeUnit.MINUTES.toMillis(30), now - lookbackMillis)
 
-        val points = samples.map {
+        val logs = positionLogDao.since(windowStart)
+        if (logs.size < 3) return emptyList()
+
+        val points = logs.map {
             GpsPoint(it.latitude, it.longitude, it.epochMillis, it.accuracyMeters)
         }
-        val stayPoints = detector.detect(points)
-        val rawTrips = segmenter.segment(points, stayPoints)
-        if (rawTrips.isEmpty()) {
-            sampleDao.pruneUnassignedBefore(cutoffNow())
-            return newPlaceIds
-        }
+        val clean = preprocessor.process(points)
+        val detected = detector.detect(clean, knownPlaces(), fallbackOriginPlaceId)
 
-        var previousDestinationPlaceId: Long? = fallbackOriginPlaceId
+        val existing = tripDao.getAutoTripsSince(windowStart - TimeUnit.HOURS.toMillis(2))
+            .filter { it.endEpochMillis != null }
+        val newPlaceIds = mutableListOf<Long>()
 
-        rawTrips.forEachIndexed { index, raw ->
-            val originPlaceId = raw.originStay
-                ?.let { stay -> resolvePlace(stay.latitude, stay.longitude, stay.arrivalMillis, newPlaceIds) }
-                ?: previousDestinationPlaceId
-
-            val destinationPlaceId = when {
-                raw.destinationStay != null -> resolvePlace(
-                    raw.destinationStay.latitude,
-                    raw.destinationStay.longitude,
-                    raw.destinationStay.arrivalMillis,
-                    newPlaceIds,
-                )
-                index == rawTrips.lastIndex -> {
-                    // Movement ended without a long enough dwell; use the last fix as a
-                    // best-effort destination so the trip still groups.
-                    val last = points.last()
-                    resolvePlace(last.latitude, last.longitude, last.epochMillis, newPlaceIds)
-                }
-                else -> null
+        for (trip in detected) {
+            val overlaps = existing.any {
+                it.startEpochMillis < trip.endMillis && (it.endEpochMillis ?: 0L) > trip.startMillis
             }
+            if (overlaps) continue
+
+            val originId = trip.originPlaceId
+                ?: ensurePlace(trip.originLatitude, trip.originLongitude, trip.startMillis, newPlaceIds)
+            val destinationId = trip.destinationPlaceId
+                ?: ensurePlace(trip.destinationLatitude, trip.destinationLongitude, trip.endMillis, newPlaceIds)
+            if (originId == destinationId) continue
 
             val tripId = tripDao.insert(
                 Trip(
-                    originPlaceId = originPlaceId,
-                    destinationPlaceId = destinationPlaceId,
-                    startEpochMillis = raw.startMillis,
-                    endEpochMillis = raw.endMillis,
-                    distanceMeters = raw.distanceMeters,
-                    sampleCount = raw.pointCount,
+                    originPlaceId = originId,
+                    destinationPlaceId = destinationId,
+                    startEpochMillis = trip.startMillis,
+                    endEpochMillis = trip.endMillis,
+                    distanceMeters = trip.pathMeters,
+                    sampleCount = trip.pointCount,
                     isAuto = true,
                     isConfirmed = false,
+                    straightness = trip.straightness,
+                    maxAccuracyMeters = trip.maxAccuracyMeters,
                 ),
             )
-            sampleDao.assignToTrip(tripId, raw.startMillis, raw.endMillis)
-            originPlaceId?.let { placeRepository.recordVisit(it, raw.startMillis) }
-            destinationPlaceId?.let { placeRepository.recordVisit(it, raw.endMillis) }
-            previousDestinationPlaceId = destinationPlaceId
+            trip.stops.forEach { stop ->
+                tripStopDao.insert(
+                    TripStop(
+                        tripId = tripId,
+                        latitude = stop.latitude,
+                        longitude = stop.longitude,
+                        arrivalMillis = stop.arrivalMillis,
+                        departureMillis = stop.departureMillis,
+                        kind = stop.kind,
+                    ),
+                )
+            }
+            placeRepository.recordVisit(originId, trip.startMillis)
+            placeRepository.recordVisit(destinationId, trip.endMillis)
         }
-
-        // Samples that fell inside a stay (not a trip) were just "sitting still".
-        sampleDao.pruneUnassignedBefore(cutoffNow())
         return newPlaceIds.distinct()
     }
 
-    suspend fun pruneOldSamples(retentionDays: Int = 7) {
-        val cutoff = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(retentionDays.toLong())
-        sampleDao.pruneOlderThan(cutoff)
+    /** Trim the raw position log: thin the old part, hard-delete the very old part. */
+    suspend fun applyRetention() {
+        val now = System.currentTimeMillis()
+        val fullCutoff = now - TimeUnit.DAYS.toMillis(config.positionLogFullRetentionDays.toLong())
+        positionLogDao.downsampleOlderThan(fullCutoff, config.positionLogDownsampleGapMillis)
+        val hardCutoff = now - TimeUnit.DAYS.toMillis(2L * config.positionLogFullRetentionDays)
+        positionLogDao.deleteOlderThan(hardCutoff)
     }
 
-    private suspend fun resolvePlace(
+    private suspend fun knownPlaces(): List<KnownPlace> =
+        placeDao.getLocated().map {
+            KnownPlace(it.id, it.latitude!!, it.longitude!!, it.radiusMeters, it.isTransit)
+        }
+
+    private suspend fun ensurePlace(
         latitude: Double,
         longitude: Double,
         seenAt: Long,
         newPlaceIds: MutableList<Long>,
     ): Long {
-        val known = placeDao.getLocated().map {
-            KnownPlace(it.id, it.latitude!!, it.longitude!!, it.radiusMeters)
-        }
-        return when (val match = resolver.resolve(latitude, longitude, known)) {
+        val resolver = PlaceResolver(minMatchRadiusMeters = config.newPlaceRadiusMeters + 10.0)
+        return when (val match = resolver.resolve(latitude, longitude, knownPlaces())) {
             is PlaceMatch.Existing -> match.placeId
             is PlaceMatch.New -> placeRepository
-                .addAutoPlace(latitude, longitude, seenAt = seenAt)
+                .addAutoPlace(latitude, longitude, config.newPlaceRadiusMeters, seenAt)
                 .also { newPlaceIds.add(it) }
         }
     }
-
-    private fun cutoffNow() = System.currentTimeMillis() - TimeUnit.MINUTES.toMillis(2)
 }

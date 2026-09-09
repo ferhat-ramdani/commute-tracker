@@ -1,5 +1,6 @@
 package com.ferhat.commutetracker.data
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -27,8 +28,13 @@ data class Place(
     val firstSeenAt: Long = System.currentTimeMillis(),
     val lastSeenAt: Long = System.currentTimeMillis(),
     val source: String = SOURCE_AUTO,
+    /** [KIND_NORMAL] or [KIND_TRANSIT] (bus stop / station — longer mid-trip wait tolerance). */
+    @ColumnInfo(defaultValue = "normal") val kind: String = KIND_NORMAL,
+    /** Comma-separated Wi-Fi SSID names seen here, used as a naming hint. Phase B fills this. */
+    val wifiSsids: String? = null,
 ) {
     val hasCoordinates: Boolean get() = latitude != null && longitude != null
+    val isTransit: Boolean get() = kind == KIND_TRANSIT
 
     companion object {
         const val DEFAULT_RADIUS_METERS = 35.0
@@ -38,5 +44,8 @@ data class Place(
 
         const val SOURCE_USER = "USER"
         const val SOURCE_AUTO = "AUTO"
+
+        const val KIND_NORMAL = "normal"
+        const val KIND_TRANSIT = "transit"
     }
 }

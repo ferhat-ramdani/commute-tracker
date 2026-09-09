@@ -8,31 +8,35 @@ location data can ever be uploaded. Cloud backup of its data is disabled too.
 
 ## What it does
 
-### Automatic background tracking (Phase A — current)
+### Automatic background tracking (Phase A.1 — current)
 
-- Detects trips on its own. You don't press start.
-- **Battery-friendly by design:** the app is fully asleep while you're not moving. The
-  OS activity-recognition sensor (hardware, near-zero power) and geofences around your
-  known places wake it when you start or stop moving. GPS only runs *during* a trip,
-  and only then is there an ongoing notification.
-- When you settle somewhere for a few minutes, it works out the trip you just made
-  (from where, to where, how long, how far), matches the endpoints to your places, and
-  discovers a new place if you stopped somewhere unknown.
-- **Routes tab** groups every trip by its start→end pair: "Home → Work · 23 trips ·
-  typ. 24 min (p90 31 min)", with a by-hour histogram. Rename a route to anything you
-  like ("Friday prayer", "School run").
-- **Places tab**: review discovered places, name them, set a match radius, merge two
-  places that are really the same, or delete.
-- Manual start/stop is still there on the Home tab as an override.
+- Detects real journeys on its own — you don't press start.
+- **Battery-friendly by design:** fully asleep while you're not moving. The OS
+  activity-recognition sensor (hardware, near-zero power) and geofences around your
+  known places wake it when you start or stop moving. GPS runs only *during* a trip
+  (at high accuracy — that's the part where precision matters), with the ongoing
+  notification. Between trips, one fix every ~30 min keeps a continuous location
+  history for almost nothing.
+- **Noise is rejected.** Mailbox runs, pottering in the garden, circling the car park —
+  not recorded. A trip must be a roughly straight journey of at least **600 m**, and
+  its start is back-dated to when you actually left.
+- **Transit waits don't split a trip.** A mid-journey stop of up to ~20 min (bus,
+  train, traffic) is kept as a "waited 14 min" note; the trip stays one journey.
+- **Routes tab** groups trips by start→end pair: "Home → Work · 23 trips · typ. 24 min
+  (p90 31 min)", with a by-hour histogram. Rename a route freely.
+- **Places tab**: name discovered places, set a match radius, mark transit stops, merge
+  duplicates, pin a place to your current location.
+- Manual start/stop is still on the Home tab as an override.
 
 ### Later
 
-- **Phase B — precision:** Wi-Fi fingerprinting (records the set of nearby network IDs
-  at each stop, no connection made) to tell places a few metres apart from each other;
-  a "new place or existing one?" review flow.
-- **Phase C — intelligence:** a small on-device LLM (opt-in) that runs rarely, only in a
-  nightly charging-time job, to suggest names for new places and routes. Rule-based
-  naming otherwise. Trip-path maps, stats, CSV/JSON export.
+- **Phase B — precision:** Wi-Fi fingerprinting (nearby network IDs + names at each
+  stop, no connection made) to separate places a few metres apart; a "new place or
+  existing one?" review flow.
+- **Phase C — naming:** a small on-device LLM (Gemma 3 1B, ~550 MB, **downloaded once**
+  then fully offline) running only in the nightly charging job, to name new places
+  (from the Wi-Fi network names it saw) and label routes. Rule-based fallback. Plus
+  trip-path maps and CSV/JSON export.
 
 ## Privacy
 
@@ -41,8 +45,9 @@ location data can ever be uploaded. Cloud backup of its data is disabled too.
 | Data leaving the device | The app declares **no `INTERNET` permission** (and no `ACCESS_NETWORK_STATE`). It is not capable of making a network request. |
 | Cloud backup / device transfer | `allowBackup="false"`; `data_extraction_rules.xml` excludes every domain from both cloud backup and device-to-device transfer. |
 | Where data lives | Room/SQLite database in the app's private storage (`/data/data/com.ferhat.commutetracker/`), unreadable by other apps. |
-| Raw GPS retention | Individual location fixes are deleted ~7 days after their trip is analysed. Trips and places stay until you delete them. |
+| Raw location history | Kept in full ~90 days, then thinned to ~1 fix/hour, then deleted. Trips and places stay until you delete them. |
 | Third-party SDKs | None for analytics/crash reporting. Google Play Services is used only for the on-device location, geofence and activity-recognition APIs (IPC to the system, not the network). |
+| The Phase C model | Downloaded once over Wi-Fi, then runs entirely offline — no telemetry, no per-inference network. Reverse geocoding stays disabled; place names come from Wi-Fi SSIDs seen locally. |
 
 ## Permissions requested
 
@@ -55,19 +60,21 @@ tracking overnight.
 
 ## How trip detection works
 
-1. **Wake:** activity-recognition ENTER `IN_VEHICLE`/`WALKING`/… or EXIT `STILL`, or a
-   geofence EXIT, starts a foreground service that samples location at
-   `PRIORITY_BALANCED_POWER_ACCURACY` (~20 s interval, batched).
-2. **Settle:** activity-recognition ENTER `STILL` schedules a check 4 minutes out. If
-   nothing resumes movement, the trip is over: the service stops.
-3. **Analyse (`AnalysisWorker`):** [stay-point detection][li2008] over the buffered
-   samples finds where you stopped; the movement between stops becomes a `Trip`;
-   endpoints are resolved to `Place`s (new ones created as needed); stay-noise samples
-   are dropped.
-4. **Group:** `TripGrouper` (pure function, unit-tested) aggregates trips by place pair
-   for the Routes tab.
+1. **Log:** every GPS fix (trip fixes, activity/geofence transitions, a 30-min
+   heartbeat) goes into `position_log` — the raw "where was I" history.
+2. **Wake / record:** an activity-recognition ENTER `IN_VEHICLE`/`WALKING`/… or EXIT
+   `STILL`, or a geofence EXIT, starts a foreground service that samples location at
+   `PRIORITY_HIGH_ACCURACY` while you move; it stops ~5 min after you go still.
+3. **Analyse (`TripDetector`, unit-tested):** over a rolling window of `position_log`,
+   bad fixes are dropped (accuracy > 40 m, teleports), the track is Kalman-smoothed,
+   then a state machine over **straightness** (`net / path`), **radius of gyration**
+   and **distance-from-anchor** finds journeys. Mid-trip stops shorter than the
+   transit-wait tolerance become `TripStop`s, not boundaries. A journey is kept only if
+   it clears the 600 m / 700 m-path / 3-min / straightness gates.
+4. **Group:** `TripGrouper` aggregates finished trips by place pair for the Routes tab.
 
-[li2008]: https://dl.acm.org/doi/10.1145/1463434.1463477
+See `analysis/DetectionConfig.kt` for every threshold, and the plan file for the full
+design rationale.
 
 ## Tech
 
